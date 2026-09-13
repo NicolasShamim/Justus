@@ -7,17 +7,18 @@
 // The code that opens the site (digits only).
 const PASSCODE = "2918";
 
-// Shared syncing. While these values are empty, photos are only saved in the
-// browser you are using. Paste your Firebase web app config here (see the
-// "How to share with each other" guide inside the site) so both of you see
-// the same photos, likes and responses on any device.
-const FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: "",
+// Shared syncing through your Firebase project, so both of you see the same
+// photos, likes and responses on any device. To use a different project, paste
+// its "const firebaseConfig = { ... };" block over this one (leave out the
+// "import" lines Firebase shows above it). If the values are ever emptied, the
+// site falls back to saving photos only in the browser you are using.
+const firebaseConfig = {
+  apiKey: "AIzaSyC_CGsShlbzppR1QADBxYgoBA1_MJTw_UA",
+  authDomain: "justus-df5c2.firebaseapp.com",
+  projectId: "justus-df5c2",
+  storageBucket: "justus-df5c2.firebasestorage.app",
+  messagingSenderId: "513920839947",
+  appId: "1:513920839947:web:8aafac41b6a75939f3320e",
 };
 
 /* ---------- Constants ---------- */
@@ -308,13 +309,13 @@ class LocalStore {
 
   subscribe(onChange, onError) {
     this.listeners.add(onChange);
-    this.all().then(onChange, onError);
+    this.all().then((posts) => onChange(posts, { confirmed: true }), onError);
     return () => this.listeners.delete(onChange);
   }
 
   async emit() {
     const posts = await this.all();
-    this.listeners.forEach((listener) => listener(posts));
+    this.listeners.forEach((listener) => listener(posts, { confirmed: true }));
   }
 
   async changed() {
@@ -334,7 +335,7 @@ class LocalStore {
   async getPhoto(id) {
     const row = await this.run("photos", "readonly", (tx) => tx.objectStore("photos").get(id));
     if (!row) throw Object.assign(new Error("Photo missing"), { code: "not-found" });
-    return row.data;
+    return dataUrlToBlob(row.data);
   }
 
   async update(id, change) {
@@ -392,10 +393,71 @@ function loadScript(src) {
     const script = document.createElement("script");
     script.src = src;
     script.onload = resolve;
-    script.onerror = () => reject(Object.assign(new Error(`Could not load ${src}`), { code: "sdk-unavailable" }));
+    script.onerror = () => {
+      script.remove();
+      reject(Object.assign(new Error(`Could not load ${src}`), { code: "sdk-unavailable" }));
+    };
     document.head.appendChild(script);
   });
 }
+
+// Photos never change once shared, so each device keeps its own copy and downloads a photo only once.
+// Everything here is best effort: if the browser refuses, photos simply load from the database.
+const photoCache = {
+  name: "just-us-photos-v1",
+  limit: 400,
+
+  open() {
+    if (!this.ready) {
+      this.ready = withTimeout(window.caches.open(this.name), 3000);
+      this.ready.catch(() => {
+        this.ready = null;
+      });
+    }
+    return this.ready;
+  },
+
+  key(id) {
+    return new URL(`photo-cache/${encodeURIComponent(id)}`, window.location.href).href;
+  },
+
+  async get(id) {
+    try {
+      const cache = await this.open();
+      const hit = await withTimeout(cache.match(this.key(id)), 3000);
+      return hit ? await hit.blob() : null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  async put(id, blob) {
+    try {
+      const cache = await this.open();
+      const response = new Response(blob, { headers: { "Content-Type": blob.type || "image/jpeg" } });
+      await withTimeout(cache.put(this.key(id), response), 5000);
+    } catch (_) {
+      /* storage full or not allowed */
+    }
+  },
+
+  // Forget deleted photos, and the oldest ones once there are more than `limit`
+  async tidy(ids) {
+    try {
+      const cache = await this.open();
+      const keep = new Set(ids.map((id) => this.key(id)));
+      const requests = await cache.keys();
+      const kept = requests.filter((request) => keep.has(request.url));
+      const overflow = kept.slice(0, Math.max(0, kept.length - this.limit));
+      const stale = requests.filter((request) => !keep.has(request.url));
+      await Promise.all([...stale, ...overflow].map((request) => cache.delete(request)));
+    } catch (_) {
+      /* nothing to tidy */
+    }
+  },
+};
+
+let cloudConnections = 0;
 
 class CloudStore {
   constructor(config) {
@@ -404,30 +466,35 @@ class CloudStore {
   }
 
   async init() {
-    if (!window.firebase || !window.firebase.firestore) {
-      await loadScript(`${FIREBASE_SDK}firebase-app-compat.js`);
-      await loadScript(`${FIREBASE_SDK}firebase-firestore-compat.js`);
+    if (!window.firebase) await loadScript(`${FIREBASE_SDK}firebase-app-compat.js`);
+    if (!window.firebase.firestore) await loadScript(`${FIREBASE_SDK}firebase-firestore-compat.js`);
+    if (typeof window.firebase.firestore !== "function") {
+      throw Object.assign(new Error("Firebase did not start"), { code: "sdk-unavailable" });
     }
-    if (!firebase.apps.length) firebase.initializeApp(this.config);
-    this.db = firebase.firestore();
-    try {
-      await this.db.enablePersistence({ synchronizeTabs: true });
-    } catch (_) {
-      /* offline cache is a bonus; private windows may not allow it */
-    }
+    // Every connection gets its own Firebase app, so reconnecting never reuses a client that broke.
+    // Firestore's offline cache (IndexedDB persistence) is deliberately left off: it is unreliable
+    // in iPhone home-screen apps and can stop the whole connection. Photos are cached separately.
+    cloudConnections += 1;
+    this.app = firebase.initializeApp(this.config, `just-us-${cloudConnections}`);
+    this.db = firebase.firestore(this.app);
     this.FieldValue = firebase.firestore.FieldValue;
     this.posts = this.db.collection("posts");
     this.photos = this.db.collection("photos");
   }
 
+  dispose() {
+    if (this.app) this.app.delete().catch(() => {});
+  }
+
   subscribe(onChange, onError) {
-    return this.posts.orderBy("createdAt", "desc").onSnapshot((snapshot) => {
+    return this.posts.orderBy("createdAt", "desc").onSnapshot({ includeMetadataChanges: true }, (snapshot) => {
       const posts = snapshot.docs.map((doc) => normalizePost(doc.id, doc.data()));
-      onChange(posts.sort((a, b) => b.createdAt - a.createdAt));
+      onChange(posts.sort((a, b) => b.createdAt - a.createdAt), { confirmed: !snapshot.metadata.fromCache });
     }, onError);
   }
 
   async addPost({ id, author, caption, image, thumb, width, height }) {
+    await photoCache.put(id, dataUrlToBlob(image)); // no need to download your own photo again
     const batch = this.db.batch();
     batch.set(this.photos.doc(id), { data: image });
     batch.set(this.posts.doc(id), { author, caption, thumb, width, height, createdAt: Date.now(), likes: [], comments: [] });
@@ -435,16 +502,13 @@ class CloudStore {
   }
 
   async getPhoto(id) {
-    const ref = this.photos.doc(id);
-    let snapshot = null;
-    try {
-      snapshot = await ref.get({ source: "cache" });
-    } catch (_) {
-      snapshot = null;
-    }
-    if (!snapshot || !snapshot.exists) snapshot = await ref.get();
+    const cached = await photoCache.get(id);
+    if (cached) return cached;
+    const snapshot = await this.photos.doc(id).get();
     if (!snapshot.exists) throw Object.assign(new Error("Photo missing"), { code: "not-found" });
-    return snapshot.data().data;
+    const blob = dataUrlToBlob(snapshot.data().data);
+    photoCache.put(id, blob);
+    return blob;
   }
 
   setLike(id, name, liked) {
@@ -507,7 +571,9 @@ const el = {
   loading: $("#loading"),
   feedError: $("#feedError"),
   feedErrorText: $("#feedErrorText"),
+  feedErrorDetail: $("#feedErrorDetail"),
   retryBtn: $("#retryBtn"),
+  errorGuideBtn: $("#errorGuideBtn"),
   empty: $("#empty"),
   emptyAddBtn: $("#emptyAddBtn"),
   feed: $("#feed"),
@@ -555,7 +621,12 @@ const state = {
   started: false,
   loaded: false,
   unsubscribe: null,
+  connection: 0, // increases with every connection attempt; answers from older attempts are ignored
+  failures: 0,
+  reconnecting: false,
   slowTimer: 0,
+  retryTimer: 0,
+  tidyTimer: 0,
   expanded: new Set(),
   openCaptions: new Set(),
   viewerId: null,
@@ -830,7 +901,9 @@ function setupWelcome() {
 /* ---------- Starting the space ---------- */
 
 function hasFirebaseConfig() {
-  return Boolean(FIREBASE_CONFIG && String(FIREBASE_CONFIG.apiKey).trim() && String(FIREBASE_CONFIG.projectId).trim());
+  // typeof keeps the site working (on this device only) even if the settings block is deleted
+  return typeof firebaseConfig !== "undefined" && Boolean(firebaseConfig
+    && String(firebaseConfig.apiKey || "").trim() && String(firebaseConfig.projectId || "").trim());
 }
 
 function startApp() {
@@ -850,29 +923,63 @@ function refreshIdentity() {
   $$(".comment-form .avatar").forEach((avatar) => paintAvatar(avatar, state.me));
 }
 
-async function connect() {
+const RETRY_DELAYS = [1500, 4000, 10000, 25000, 60000];
+
+// fresh: throw away the current connection and start a new one.
+// quiet: reconnect in the background without touching what's on screen.
+async function connect({ fresh = false, quiet = false } = {}) {
+  const attempt = ++state.connection;
+  clearTimeout(state.retryTimer);
   if (state.unsubscribe) {
     state.unsubscribe();
     state.unsubscribe = null;
   }
-  el.feedError.hidden = true;
-  if (!state.loaded) el.loading.hidden = false;
-  clearTimeout(state.slowTimer);
-  state.slowTimer = setTimeout(() => {
-    if (!state.loaded) toast("Still connecting to your space…", "info");
-  }, 9000);
+  if (fresh && state.store && state.store.dispose) {
+    state.store.dispose();
+    state.store = null;
+  }
+  if (!quiet && !state.loaded) {
+    el.feedError.hidden = true;
+    el.loading.hidden = false;
+    clearTimeout(state.slowTimer);
+    state.slowTimer = setTimeout(() => {
+      if (!state.loaded && el.feedError.hidden) toast("Still connecting to your space…", "info");
+    }, 9000);
+  }
 
   try {
     if (!state.store) {
-      const store = hasFirebaseConfig() ? new CloudStore(FIREBASE_CONFIG) : new LocalStore();
+      const store = hasFirebaseConfig() ? new CloudStore(firebaseConfig) : new LocalStore();
       await store.init();
+      if (attempt !== state.connection) {
+        if (store.dispose) store.dispose();
+        return;
+      }
       state.store = store;
       renderSyncStatus();
     }
-    state.unsubscribe = state.store.subscribe(onPosts, onStoreError);
+    state.unsubscribe = state.store.subscribe(
+      (posts, meta) => {
+        if (attempt === state.connection) onPosts(posts, meta);
+      },
+      (error) => {
+        if (attempt === state.connection) onStoreError(error);
+      },
+    );
   } catch (error) {
-    onStoreError(error);
+    if (attempt === state.connection) onStoreError(error);
   }
+}
+
+// Coming back to the app, or back online, is the best moment to repair a connection that failed
+function reconnectIfNeeded() {
+  if (state.started && state.failures > 0) connect({ fresh: true, quiet: state.loaded });
+}
+
+// The connection is briefly missing while reconnecting; say so instead of silently doing nothing
+function readyStore() {
+  if (!state.store) toast("Reconnecting to your space. Try again in a moment.", "info");
+  return state.store;
 }
 
 function renderSyncStatus() {
@@ -893,8 +1000,20 @@ function renderSyncStatus() {
   el.setupNotice.hidden = !local || storage.get(KEYS.noticeDismissed) === "1";
 }
 
-function onPosts(posts) {
+function onPosts(posts, { confirmed = true } = {}) {
+  // A new connection can report an empty list before the server has answered.
+  // Wait for the real answer instead of flashing "Your first memory is waiting".
+  if (!confirmed && posts.length === 0) return;
   clearTimeout(state.slowTimer);
+  if (confirmed) {
+    if (state.reconnecting) toast("Connected again");
+    state.reconnecting = false;
+    state.failures = 0;
+    if (state.store && state.store.mode === "cloud") {
+      clearTimeout(state.tidyTimer);
+      state.tidyTimer = setTimeout(() => photoCache.tidy(state.posts.map((post) => post.id)), 5000);
+    }
+  }
   const firstLoad = !state.loaded;
   state.posts = posts;
   state.byId = new Map(posts.map((post) => [post.id, post]));
@@ -914,21 +1033,61 @@ function onPosts(posts) {
 function onStoreError(error) {
   console.error(error);
   clearTimeout(state.slowTimer);
-  el.loading.hidden = true;
-  const code = error && error.code;
-  let message = friendlyError(error, "Please check your internet connection and try again.");
-  if (code === "sdk-unavailable") message = "The connection to your shared space couldn’t start. Check your internet connection and try again.";
-  if (code === "no-storage") message = "This browser doesn’t allow saving photos. Try opening the site in a normal, non-private window.";
+  clearTimeout(state.retryTimer);
+  state.unsubscribe = null;
+  state.failures += 1;
+  const code = errorCode(error);
 
-  if (state.loaded && code !== "permission-denied") {
-    toast("Lost the connection to your space. Reconnecting…", "error");
-    state.unsubscribe = null;
-    setTimeout(connect, 8000);
+  // Most problems (waking the phone, switching networks) pass within seconds, so keep
+  // retrying with a brand-new connection. Missing rules can take longer to be fixed.
+  if (code !== "no-storage") {
+    const delay = code === "permission-denied"
+      ? 60000
+      : RETRY_DELAYS[Math.min(state.failures, RETRY_DELAYS.length) - 1];
+    state.retryTimer = setTimeout(() => connect({ fresh: true, quiet: true }), delay);
+  }
+
+  if (state.loaded) {
+    // Keep showing the photos that are already on screen
+    if (code === "permission-denied") toast(friendlyError(error), "error");
+    else if (!state.reconnecting) toast("Reconnecting to your space…", "info");
+    state.reconnecting = true;
     return;
   }
+  if (state.failures >= 3 || code === "permission-denied" || code === "no-storage") showConnectionError(error);
+}
+
+function errorCode(error) {
+  return error && typeof error.code === "string" ? error.code : "";
+}
+
+function showConnectionError(error) {
+  const code = errorCode(error);
+  let message = "Something interrupted the connection. It keeps trying by itself, or tap Try again.";
+  if (code === "permission-denied" || code === "resource-exhausted") {
+    message = friendlyError(error);
+  } else if (code === "no-storage") {
+    message = "This browser doesn’t allow saving photos. Try opening the site in a normal, non-private window.";
+  } else if (navigator.onLine === false) {
+    message = "You seem to be offline. Your photos will appear as soon as you’re connected.";
+  } else if (code === "sdk-unavailable") {
+    message = "The connection to your space couldn’t load. Check your internet connection, then tap Try again.";
+  }
+  el.loading.hidden = true;
   el.feedErrorText.textContent = message;
+  el.feedErrorDetail.textContent = describeError(error);
+  el.errorGuideBtn.hidden = code !== "permission-denied";
   el.feedError.hidden = false;
   el.empty.hidden = true;
+  el.fab.hidden = true;
+}
+
+// Small technical line on the error card, handy for a screenshot if something keeps failing
+function describeError(error) {
+  if (!error) return "";
+  const label = errorCode(error) || error.name || "error";
+  const text = String(error.message || error).replace(/^FirebaseError:\s*/i, "").replace(/^\[code=[^\]]*\]:\s*/i, "");
+  return `Details: ${label}${text ? ` · ${text}` : ""}`.slice(0, 220);
 }
 
 /* ---------- Rendering ---------- */
@@ -937,6 +1096,7 @@ function render(firstLoad = false) {
   const count = state.posts.length;
   el.stats.textContent = count ? `${count} ${count === 1 ? "memory" : "memories"}` : "";
   el.viewSwitch.hidden = count === 0;
+  el.fab.hidden = count === 0; // the empty state has its own button
   el.empty.hidden = count > 0 || !el.feedError.hidden;
   el.feedEnd.hidden = count < 3;
   reconcile(el.feed, cards, createCard, updateCard, firstLoad);
@@ -1166,7 +1326,8 @@ function observePhoto(img, id) {
 
 function photoUrl(id) {
   if (!photoUrls.has(id)) {
-    const promise = state.store.getPhoto(id).then((dataUrl) => URL.createObjectURL(dataUrlToBlob(dataUrl)));
+    if (!state.store) return Promise.reject(Object.assign(new Error("Not connected yet"), { code: "unavailable" }));
+    const promise = state.store.getPhoto(id).then((blob) => URL.createObjectURL(blob));
     promise.catch(() => {
       if (photoUrls.get(id) === promise) photoUrls.delete(id);
     });
@@ -1182,7 +1343,7 @@ function showPhoto(img, attempt = 0) {
     img.src = url;
   }).catch((error) => {
     if (attempt === 0) console.warn("Photo not available yet", id, error);
-    const delay = Math.min(60000, 2500 * 2 ** attempt);
+    const delay = Math.min(15000, 2000 * 2 ** attempt);
     setTimeout(() => {
       if (img.isConnected && state.byId.has(id)) showPhoto(img, attempt + 1);
     }, delay);
@@ -1269,14 +1430,16 @@ function updateEverywhere(id) {
 
 function toggleLike(id, onlyLike = false) {
   const post = state.byId.get(id);
-  if (!post || !state.store) return;
+  if (!post) return;
   const liked = post.likes.includes(state.me);
   if (onlyLike && liked) return;
+  const store = readyStore();
+  if (!store) return;
   const next = !liked;
   post.likes = next ? [...post.likes, state.me] : post.likes.filter((name) => name !== state.me);
   updateEverywhere(id);
   if (next) $$(`[data-id="${CSS.escape(id)}"] .like-btn`).forEach(pop);
-  state.store.setLike(id, state.me, next).catch((error) => {
+  store.setLike(id, state.me, next).catch((error) => {
     toast(friendlyError(error, "Couldn’t save that like."), "error");
   });
 }
@@ -1307,13 +1470,15 @@ function sendComment(form) {
   const input = $(".comment-input", form);
   const text = input.value.replace(/\s+/g, " ").trim().slice(0, 500);
   const post = holder && state.byId.get(holder.dataset.id);
-  if (!text || !post || !state.store) return;
+  if (!text || !post) return;
+  const store = readyStore();
+  if (!store) return;
   const comment = { id: uid(), author: state.me, text, createdAt: Date.now() };
   input.value = "";
   $(".send-btn", form).disabled = true;
   post.comments = [...post.comments, comment];
   updateEverywhere(post.id);
-  state.store.addComment(post.id, comment).catch((error) => {
+  store.addComment(post.id, comment).catch((error) => {
     toast(friendlyError(error, "Couldn’t send that response."), "error");
     if (!input.value) {
       input.value = text;
@@ -1331,8 +1496,9 @@ async function deleteComment(postId, commentId) {
     text: "It will be removed for both of you.",
     confirm: "Delete",
   });
-  if (!confirmed) return;
-  state.store.deleteComment(postId, comment).catch((error) => {
+  const store = confirmed && readyStore();
+  if (!store) return;
+  store.deleteComment(postId, comment).catch((error) => {
     toast(friendlyError(error, "Couldn’t delete that response."), "error");
   });
 }
@@ -1438,8 +1604,10 @@ async function deletePost(id) {
     confirm: "Delete",
   });
   if (!confirmed || !state.byId.has(id)) return;
+  const store = readyStore();
+  if (!store) return;
   if (state.viewerId === id) closeDialog(el.viewer);
-  state.store.deletePost(id)
+  store.deletePost(id)
     .then(() => toast("Memory deleted"))
     .catch((error) => toast(friendlyError(error, "Couldn’t delete that memory."), "error"));
 }
@@ -1449,7 +1617,7 @@ async function deletePost(id) {
 const composer = { file: null, preparing: null, previewUrl: null, busy: false, token: 0 };
 
 function openComposer(file) {
-  if (!state.store) return;
+  if (!readyStore()) return;
   closeMenus();
   resetComposer();
   openDialog(el.composer);
@@ -1521,17 +1689,25 @@ async function shareMemory() {
   const token = composer.token;
   composer.busy = true;
   setShareBusy(true);
+  let upload = null;
   try {
     const prepared = await composer.preparing;
     const caption = el.captionInput.value.trim().slice(0, 600);
-    await withTimeout(state.store.addPost({ id: uid(), author: state.me, caption, ...prepared }), UPLOAD_PATIENCE_MS);
+    if (!state.store) throw Object.assign(new Error("Reconnecting"), { code: "unavailable" });
+    upload = state.store.addPost({ id: uid(), author: state.me, caption, ...prepared });
+    await withTimeout(upload, UPLOAD_PATIENCE_MS);
+    composer.busy = false;
     closeDialog(el.composer);
     toast("Shared with love", "love");
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (error) {
     if (error && error.code === "timeout") {
+      composer.busy = false;
       closeDialog(el.composer);
       toast("Still uploading. It will appear for both of you shortly.", "info");
+      upload.catch((uploadError) => {
+        toast(friendlyError(uploadError, "That photo couldn’t be shared. Please try again."), "error");
+      });
       return;
     }
     if (token === composer.token) {
@@ -1645,8 +1821,11 @@ function setupEvents() {
     if (button) button.disabled = !event.target.value.trim();
   });
 
+  // On phones the add button would sit on top of the keyboard while typing a response
   document.addEventListener("focusin", (event) => {
-    if (event.target.matches(".comment-input")) el.fab.classList.add("is-hidden");
+    if (event.target.matches(".comment-input") && matchMedia("(pointer: coarse)").matches) {
+      el.fab.classList.add("is-hidden");
+    }
   });
 
   document.addEventListener("focusout", (event) => {
@@ -1708,14 +1887,15 @@ function setupEvents() {
     setTimeout(() => window.location.reload(), 480);
   });
 
-  // Top bar and add button react to scrolling
+  // Top bar reacts to scrolling; on phones the add button tucks away while scrolling down
   let lastY = window.scrollY;
+  const phone = matchMedia("(pointer: coarse)");
   window.addEventListener("scroll", () => {
     const y = window.scrollY;
     el.topbar.classList.toggle("is-scrolled", y > 8);
     if (Math.abs(y - lastY) < 8) return;
     const typing = document.activeElement && document.activeElement.matches(".comment-input");
-    if (!typing) el.fab.classList.toggle("is-hidden", y > lastY && y > 280);
+    if (!typing) el.fab.classList.toggle("is-hidden", phone.matches && y > lastY && y > 280);
     lastY = y;
     if (!el.meMenu.hidden) closeMenus();
   }, { passive: true });
@@ -1751,7 +1931,8 @@ function setupEvents() {
     }, 1800);
   });
 
-  el.retryBtn.addEventListener("click", connect);
+  el.retryBtn.addEventListener("click", () => connect({ fresh: true }));
+  el.errorGuideBtn.addEventListener("click", () => openDialog(el.guide));
 
   // New memory
   el.fab.addEventListener("click", () => openComposer());
@@ -1840,11 +2021,16 @@ function setupEvents() {
     const id = state.editingId;
     const post = state.byId.get(id);
     const caption = el.editorInput.value.trim().slice(0, 600);
+    if (!post || caption === post.caption) {
+      closeDialog(el.editor);
+      return;
+    }
+    const store = readyStore();
+    if (!store) return; // keep the dialog open so the new caption isn't lost
     closeDialog(el.editor);
-    if (!post || caption === post.caption) return;
     post.caption = caption;
     updateEverywhere(id);
-    state.store.updateCaption(id, caption).catch((error) => {
+    store.updateCaption(id, caption).catch((error) => {
       toast(friendlyError(error, "Couldn’t update the caption."), "error");
     });
   });
@@ -1893,22 +2079,79 @@ function setupEvents() {
     if (state.store && state.store.mode === "cloud") toast("You’re offline. Changes will sync when you’re back.", "info");
   });
   window.addEventListener("online", () => {
-    if (state.store && state.store.mode === "cloud") toast("Back online");
+    if (state.failures > 0) reconnectIfNeeded(); // shows "Connected again" once it works
+    else if (state.store && state.store.mode === "cloud") toast("Back online");
   });
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && state.started) refreshTimes();
+    if (document.hidden || !state.started) return;
+    refreshTimes();
+    reconnectIfNeeded();
   });
+  // iPhone home-screen apps are often restored from memory instead of reloaded
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) reconnectIfNeeded();
+  });
+}
+
+/* ---------- Home-screen app on Android ---------- */
+
+// iPhones take the home-screen icon from index.html. Android needs a web app manifest to install
+// the site as an app, so one is built here from the same icon (keeping the project at three files).
+async function setupAndroidManifest() {
+  const apple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+  if (apple || !/^https?:$/.test(window.location.protocol) || $('link[rel="manifest"]')) return;
+  try {
+    const source = new Image();
+    source.src = $('link[rel="icon"]').href;
+    await source.decode();
+    const icon = (size, purpose) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      canvas.getContext("2d").drawImage(source, 0, 0, size, size);
+      return { src: canvas.toDataURL("image/png"), sizes: `${size}x${size}`, type: "image/png", purpose };
+    };
+    const large = icon(512, "any");
+    const manifest = {
+      name: "Just Us",
+      short_name: "Just Us",
+      start_url: window.location.origin + window.location.pathname,
+      scope: new URL("./", window.location.href).href,
+      display: "standalone",
+      background_color: "#f5efea",
+      theme_color: "#f5efea",
+      icons: [icon(192, "any"), large, { ...large, purpose: "maskable" }],
+    };
+    const link = document.createElement("link");
+    link.rel = "manifest";
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+    document.head.appendChild(link);
+  } catch (_) {
+    /* optional: the site works the same without it */
+  }
 }
 
 /* ---------- Start ---------- */
 
+// Netlify gives every upload its own "permalink" (1234abcd…--name.netlify.app) that shows that one
+// upload forever. Move to the main address so a home-screen icon never gets stuck on an old version.
+function leaveFrozenDeployLink() {
+  const match = window.location.hostname.match(/^[0-9a-f]{24}--(.+\.netlify\.app)$/i);
+  if (!match) return false;
+  const { pathname, search, hash } = window.location;
+  window.location.replace(`https://${match[1]}${pathname}${search}${hash}`);
+  return true;
+}
+
 function boot() {
+  if (leaveFrozenDeployLink()) return;
   setupDialogs();
   setupLock();
   setupWelcome();
   setupEvents();
   if (storage.get(KEYS.unlocked, session()) === "1") afterUnlock();
   else el.lock.hidden = false;
+  setTimeout(setupAndroidManifest, 1500);
 }
 
 boot();

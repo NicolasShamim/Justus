@@ -60,7 +60,7 @@ body {
   margin: 0;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--bg);
+  background: transparent; /* the page colour lives on <html> so the soft background shows through */
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 15px;
@@ -272,6 +272,7 @@ p {
   font-weight: 500;
   letter-spacing: -0.012em;
   line-height: 1.05;
+  text-wrap: balance;
 }
 
 .eyebrow {
@@ -946,6 +947,13 @@ p {
   background: rgba(255, 255, 255, 0.75);
 }
 
+.menu-version {
+  padding: 8px 12px 4px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
 .menu-item--danger,
 .menu-item--danger .icon {
   color: var(--danger);
@@ -1141,6 +1149,21 @@ p {
 
 .state-card .btn {
   margin-top: 16px;
+}
+
+.error-detail {
+  max-width: 320px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.error-detail:empty {
+  display: none;
 }
 
 .state-title {
@@ -2032,6 +2055,7 @@ p {
   margin: 0 10px calc(10px + var(--safe-bottom));
   padding: 6px;
   border-radius: 30px;
+  background: linear-gradient(150deg, rgba(252, 249, 246, 0.97), rgba(246, 240, 237, 0.95));
   transform: translateY(30px);
   transition: transform 0.6s var(--ease);
 }
@@ -2121,7 +2145,7 @@ p {
   position: fixed;
   left: 0;
   right: 0;
-  top: calc(14px + var(--safe-top));
+  top: calc(76px + var(--safe-top));
   z-index: 60;
   display: grid;
   justify-items: center;
@@ -2246,6 +2270,14 @@ p {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 18px;
   }
+
+  /* On big screens the add button sits in the corner, clear of the photos */
+  .fab {
+    left: auto;
+    right: 32px;
+    bottom: 32px;
+    margin: 0;
+  }
 }
 
 @media (min-width: 900px) {
@@ -2271,7 +2303,9 @@ p {
   }
 
   .viewer-side {
+    align-self: center;
     width: 400px;
+    max-height: 100%;
     margin: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
