@@ -2206,6 +2206,638 @@ p {
   stroke-width: 0;
 }
 
+/* ---------- Shnotter special ---------- */
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sh-entry {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 15px 0 10px;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: var(--ink);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: inset 0 1px 0 #fff, 0 8px 22px -14px rgba(120, 70, 60, 0.55);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  transition: transform 0.45s var(--spring), box-shadow 0.3s;
+}
+
+.sh-entry::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(110deg, transparent 25%, rgba(242, 184, 194, 0.6) 45%, rgba(214, 200, 240, 0.6) 58%, transparent 75%);
+  transform: translateX(-130%);
+  animation: sh-shimmer 6s var(--ease-in-out) infinite;
+}
+
+@keyframes sh-shimmer {
+  0%, 60% { transform: translateX(-130%); }
+  100% { transform: translateX(130%); }
+}
+
+.sh-entry .icon {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.5;
+  color: #8a5a44;
+}
+
+.sh-entry:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 #fff, 0 14px 28px -14px rgba(120, 70, 60, 0.6);
+}
+
+.sh-entry:active {
+  transform: scale(0.95);
+}
+
+.shnotter {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  color: #fff;
+  background: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.shnotter[open] {
+  display: block;
+}
+
+.shnotter::backdrop {
+  background: transparent;
+}
+
+.shnotter > * {
+  position: absolute;
+}
+
+/* Darkness */
+
+.sh-dark {
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  opacity: 0;
+  background: radial-gradient(120% 90% at 50% 72%, #16101a 0%, #070509 58%, #020103 100%);
+}
+
+.sh-grain {
+  position: absolute;
+  inset: -40%;
+  opacity: 0.2;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: sh-grain 0.9s steps(5) infinite;
+}
+
+@keyframes sh-grain {
+  0% { transform: translate3d(0, 0, 0); }
+  20% { transform: translate3d(-5%, 3%, 0); }
+  40% { transform: translate3d(3%, -4%, 0); }
+  60% { transform: translate3d(-3%, -2%, 0); }
+  80% { transform: translate3d(4%, 4%, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+.sh-bars {
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.sh-bars i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7vh;
+  background: #000;
+  transform: scaleY(0);
+  transition: transform 1s var(--ease);
+}
+
+.sh-bars i:first-child {
+  top: 0;
+  transform-origin: top;
+}
+
+.sh-bars i:last-child {
+  bottom: 0;
+  transform-origin: bottom;
+}
+
+.shnotter.is-cinema .sh-bars i {
+  transform: scaleY(1);
+}
+
+/* Spotlight */
+
+.sh-beam {
+  inset: 0;
+  z-index: 4;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sh-cone,
+.sh-dust {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(100% - 12vh - var(--safe-bottom));
+}
+
+/* A soft beam of light from above: brightest in the middle, fading at its edges and towards the floor */
+.sh-cone {
+  background: conic-gradient(at 50% -6%, transparent 0deg, transparent 161deg, rgba(255, 236, 214, 0.05) 168deg, rgba(255, 238, 218, 0.17) 176deg, rgba(255, 240, 222, 0.2) 180deg, rgba(255, 238, 218, 0.17) 184deg, rgba(255, 236, 214, 0.05) 192deg, transparent 199deg, transparent 360deg);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
+}
+
+.sh-dust i {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: var(--d);
+  height: var(--d);
+  border-radius: 50%;
+  background: #fff4e4;
+  opacity: var(--o);
+  box-shadow: 0 0 4px rgba(255, 236, 210, 0.8);
+  animation: sh-mote var(--t) ease-in-out var(--delay) infinite alternate;
+}
+
+@keyframes sh-mote {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(var(--mx), -28px, 0); }
+}
+
+.sh-pool {
+  position: absolute;
+  left: 50%;
+  bottom: calc(10vh + var(--safe-bottom) + 16vh - 7vh);
+  width: min(96vw, 720px);
+  height: 14vh;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(255, 230, 204, 0.32), rgba(255, 230, 204, 0.1) 62%, transparent);
+}
+
+.sh-eyes {
+  left: 17%;
+  top: 60%;
+  z-index: 5;
+  display: flex;
+  gap: 13px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sh-eyes i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff6e6;
+  box-shadow: 0 0 6px 2px rgba(255, 234, 196, 0.85), 0 0 22px 8px rgba(255, 214, 160, 0.3);
+}
+
+/* The plush otter */
+
+.sh-stage {
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  --h: min(56vh, 118vw, 560px);
+  --w: calc(var(--h) * 0.755);
+}
+
+.sh-otter {
+  position: absolute;
+  left: calc(50% - var(--w) / 2);
+  bottom: calc(10vh + var(--safe-bottom));
+  width: var(--w);
+  height: var(--h);
+  opacity: 0;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+
+.sh-otter::before {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: -4%;
+  height: 10%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.55), transparent);
+}
+
+.sh-zoom,
+.sh-body {
+  position: absolute;
+  inset: 0;
+}
+
+.sh-zoom {
+  transform-origin: 50% 24%;
+}
+
+.sh-body {
+  transform-origin: 50% 100%;
+}
+
+.sh-body.is-tiptoe {
+  animation: sh-tiptoe 0.48s ease-in-out infinite;
+}
+
+@keyframes sh-tiptoe {
+  0%, 100% { transform: translateY(0) rotate(-2.5deg); }
+  25% { transform: translateY(-3.5%) rotate(0deg); }
+  50% { transform: translateY(0) rotate(2.5deg); }
+  75% { transform: translateY(-3.5%) rotate(0deg); }
+}
+
+.sh-body.is-floating {
+  animation: sh-floaty 3.2s ease-in-out infinite;
+}
+
+@keyframes sh-floaty {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-4%) rotate(2deg); }
+}
+
+.sh-plush {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  -webkit-user-drag: none;
+}
+
+.sh-shade {
+  position: absolute;
+  inset: 0;
+  opacity: 0.85;
+  background: #060408;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.sh-ripple {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: -6%;
+  height: 16%;
+  opacity: 0;
+}
+
+.sh-ripple::before,
+.sh-ripple::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  opacity: 0;
+}
+
+.sh-otter.is-afloat::before {
+  opacity: 0;
+}
+
+.sh-otter.is-afloat .sh-ripple {
+  opacity: 1;
+}
+
+.sh-otter.is-afloat .sh-ripple::before,
+.sh-otter.is-afloat .sh-ripple::after {
+  animation: sh-ring 3s ease-out infinite;
+}
+
+.sh-otter.is-afloat .sh-ripple::after {
+  animation-delay: 1.5s;
+}
+
+@keyframes sh-ring {
+  0% { transform: scale(0.55); opacity: 0; }
+  25% { opacity: 0.9; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+/* The ocean */
+
+.sh-ocean {
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  opacity: 0;
+  background: radial-gradient(150% 95% at 50% 0%, #a3dcdb 0%, #5db2b8 30%, #338b97 62%, #1b5f6d 100%);
+}
+
+.sh-light {
+  position: absolute;
+  inset: -320px; /* bigger than the distance it drifts, so its edge never shows */
+  opacity: 0.2;
+  background:
+    radial-gradient(closest-side, rgba(255, 255, 255, 0.95), transparent) 0 0 / 240px 150px,
+    radial-gradient(closest-side, rgba(255, 255, 255, 0.75), transparent) 120px 75px / 240px 150px;
+  animation: sh-drift-light 20s linear infinite;
+}
+
+.sh-light--slow {
+  opacity: 0.14;
+  background-size: 380px 230px, 380px 230px;
+  background-position: 60px 40px, 250px 155px;
+  animation-duration: 34s;
+  animation-direction: reverse;
+}
+
+@keyframes sh-drift-light {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-240px, -150px, 0); }
+}
+
+.sh-waves {
+  position: absolute;
+  inset: 0 -200px;
+  opacity: 0.22;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='56'%3E%3Cpath d='M0 28 Q25 18 50 28 T100 28 T150 28 T200 28' fill='none' stroke='white' stroke-opacity='.55' stroke-width='1.4'/%3E%3C/svg%3E") 0 0 / 200px 56px;
+  animation: sh-waves 9s linear infinite;
+}
+
+@keyframes sh-waves {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(200px, 0, 0); }
+}
+
+.sh-sea {
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sh-swim {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+
+.sh-swim-pop {
+  display: flex;
+  align-items: flex-end;
+  transform-origin: 50% 70%;
+}
+
+.sh-swim-bob {
+  position: relative;
+  animation: sh-bob var(--bob, 3.6s) ease-in-out var(--delay, 0s) infinite alternate;
+}
+
+.sh-swim-bob + .sh-swim-bob {
+  margin-left: calc(var(--size) * -0.2);
+}
+
+.sh-swim-bob::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 2%;
+  z-index: -1;
+  height: 24%;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  opacity: 0;
+  animation: sh-ring 3.4s ease-out var(--delay, 0s) infinite;
+}
+
+@keyframes sh-bob {
+  from { transform: translateY(-5%) rotate(var(--tilt-a, -4deg)); }
+  to { transform: translateY(5%) rotate(var(--tilt-b, 4deg)); }
+}
+
+.sh-swim img {
+  display: block;
+  width: auto;
+  height: var(--size);
+  -webkit-user-drag: none;
+}
+
+.sh-swim img.is-flipped {
+  transform: scaleX(-1);
+}
+
+/* Hearts */
+
+.sh-hearts {
+  inset: 0;
+  z-index: 7;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sh-heart {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--s);
+  height: var(--s);
+  will-change: transform, opacity;
+}
+
+.sh-heart > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation: sh-sway var(--sway, 2s) ease-in-out infinite alternate;
+}
+
+.sh-heart svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: var(--c);
+  stroke: none;
+}
+
+.sh-heart--glass svg {
+  fill: rgba(255, 255, 255, 0.72);
+  stroke: rgba(255, 255, 255, 0.95);
+  stroke-width: 1.2px;
+}
+
+@keyframes sh-sway {
+  from { transform: translateX(calc(var(--dx, 8px) * -1)) rotate(-12deg); }
+  to { transform: translateX(var(--dx, 8px)) rotate(12deg); }
+}
+
+.sh-flash {
+  inset: 0;
+  z-index: 9;
+  opacity: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 42%, #fff 0%, #ffe6ec 38%, #f5b3c1 100%);
+}
+
+/* Words and the way back */
+
+.sh-caption {
+  left: 16px;
+  right: 16px;
+  top: calc(13vh + var(--safe-top));
+  z-index: 10;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(22px, 6vw, 34px);
+  font-style: italic;
+  letter-spacing: 0.02em;
+  text-align: center;
+  color: rgba(255, 243, 232, 0.86);
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.7);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sh-message {
+  left: 16px;
+  right: 16px;
+  top: calc(18px + var(--safe-top));
+  z-index: 10;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 20px 24px 18px;
+  border-radius: 28px;
+  text-align: center;
+  color: var(--ink);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.95), rgba(246, 252, 252, 0.88));
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: inset 0 1px 0 #fff, 0 30px 60px -30px rgba(8, 48, 58, 0.65);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  backdrop-filter: blur(20px) saturate(150%);
+  opacity: 0;
+  visibility: hidden;
+}
+
+.sh-message.is-shown,
+.sh-return.is-shown {
+  visibility: visible;
+}
+
+.sh-kicker {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--rose-deep);
+}
+
+.sh-fact {
+  margin-top: 8px;
+  font-family: var(--font-display);
+  font-size: clamp(21px, 5.6vw, 29px);
+  font-weight: 500;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.sh-us {
+  margin-top: 8px;
+  font-family: var(--font-display);
+  font-size: clamp(24px, 6.6vw, 34px);
+  font-style: italic;
+  line-height: 1.1;
+  color: var(--rose-deep);
+}
+
+.sh-return {
+  left: 0;
+  right: 0;
+  bottom: calc(22px + var(--safe-bottom));
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  height: 54px;
+  margin: 0 auto;
+  padding: 0 26px 0 18px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.8));
+  border: 1px solid #fff;
+  box-shadow: inset 0 1px 0 #fff, 0 22px 44px -18px rgba(6, 40, 50, 0.6);
+  opacity: 0;
+  visibility: hidden;
+  transition: transform 0.4s var(--spring);
+}
+
+.sh-return .icon {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
+}
+
+.sh-return:active {
+  transform: scale(0.96);
+}
+
+@media (max-width: 380px) {
+  .wordmark--small {
+    font-size: 25px;
+  }
+
+  .topbar-actions {
+    gap: 8px;
+  }
+
+  .sh-entry {
+    gap: 5px;
+    padding: 0 11px 0 8px;
+    font-size: 12px;
+  }
+
+  .sh-entry .icon {
+    width: 19px;
+    height: 19px;
+  }
+}
+
 /* ---------- Larger screens ---------- */
 
 @media (min-width: 640px) {
